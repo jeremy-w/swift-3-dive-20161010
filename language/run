@@ -1,0 +1,10 @@
+#!/bin/bash
+# run: runs a single-file build using a script in an initial C99-style comment
+# {} is replaced with the filename itself.
+run() {
+    file=$1
+    line=$(head -1 "$file" | cut -c 4- | sed -e 's!{}!'"$1"'!g')
+    echo "running: $line"
+    eval "$line"
+}
+run $1
