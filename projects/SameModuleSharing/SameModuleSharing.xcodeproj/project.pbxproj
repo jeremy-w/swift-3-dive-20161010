@@ -14,6 +14,7 @@
 		3F2E29741DAD506F00519C9E /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 3F2E29721DAD506F00519C9E /* LaunchScreen.storyboard */; };
 		3F2E297F1DAD506F00519C9E /* SameModuleSharingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F2E297E1DAD506F00519C9E /* SameModuleSharingTests.swift */; };
 		3F2E298A1DAD508300519C9E /* README.md in Sources */ = {isa = PBXBuildFile; fileRef = 3F2E29891DAD508300519C9E /* README.md */; };
+		3F2E298E1DAD513500519C9E /* ObjCViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 3F2E298D1DAD513500519C9E /* ObjCViewController.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,6 +39,9 @@
 		3F2E297E1DAD506F00519C9E /* SameModuleSharingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SameModuleSharingTests.swift; sourceTree = "<group>"; };
 		3F2E29801DAD506F00519C9E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		3F2E29891DAD508300519C9E /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		3F2E298B1DAD513400519C9E /* SameModuleSharing-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "SameModuleSharing-Bridging-Header.h"; sourceTree = "<group>"; };
+		3F2E298C1DAD513500519C9E /* ObjCViewController.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ObjCViewController.h; sourceTree = "<group>"; };
+		3F2E298D1DAD513500519C9E /* ObjCViewController.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = ObjCViewController.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,10 +86,13 @@
 			children = (
 				3F2E29691DAD506F00519C9E /* AppDelegate.swift */,
 				3F2E296B1DAD506F00519C9E /* ViewController.swift */,
+				3F2E298C1DAD513500519C9E /* ObjCViewController.h */,
+				3F2E298D1DAD513500519C9E /* ObjCViewController.m */,
 				3F2E296D1DAD506F00519C9E /* Main.storyboard */,
 				3F2E29701DAD506F00519C9E /* Assets.xcassets */,
 				3F2E29721DAD506F00519C9E /* LaunchScreen.storyboard */,
 				3F2E29751DAD506F00519C9E /* Info.plist */,
+				3F2E298B1DAD513400519C9E /* SameModuleSharing-Bridging-Header.h */,
 			);
 			path = SameModuleSharing;
 			sourceTree = "<group>";
@@ -150,6 +157,7 @@
 					3F2E29651DAD506F00519C9E = {
 						CreatedOnToolsVersion = 8.0;
 						DevelopmentTeam = EUDG8SE7G5;
+						LastSwiftMigration = 0800;
 						ProvisioningStyle = Automatic;
 					};
 					3F2E29791DAD506F00519C9E = {
@@ -204,6 +212,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3F2E298E1DAD513500519C9E /* ObjCViewController.m in Sources */,
 				3F2E298A1DAD508300519C9E /* README.md in Sources */,
 				3F2E296C1DAD506F00519C9E /* ViewController.swift in Sources */,
 				3F2E296A1DAD506F00519C9E /* AppDelegate.swift in Sources */,
@@ -345,11 +354,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
 				DEVELOPMENT_TEAM = EUDG8SE7G5;
 				INFOPLIST_FILE = SameModuleSharing/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.jeremywsherman.SameModuleSharing;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = "SameModuleSharing/SameModuleSharing-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 3.0;
 			};
 			name = Debug;
@@ -358,11 +370,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_MODULES = YES;
 				DEVELOPMENT_TEAM = EUDG8SE7G5;
 				INFOPLIST_FILE = SameModuleSharing/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = com.jeremywsherman.SameModuleSharing;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = "SameModuleSharing/SameModuleSharing-Bridging-Header.h";
 				SWIFT_VERSION = 3.0;
 			};
 			name = Release;
