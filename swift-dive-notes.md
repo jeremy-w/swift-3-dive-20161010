@@ -103,6 +103,38 @@ Questions answered today are from the LANGUAGE grouping.
 - Poked at enums and exhaustiveness and raw values a bit. The raw assignment
   really is pretty braindead. This is a good move in terms of predictability
   and mental modeling, so, I like it.
+- Investigated Swift + Obj-C usage without an xcodeproj.
+  Figured out how to do it, as well as came to a better understanding of
+  what Xcode is doing to compile combined Swift + Obj-C projects.
+    - Do note that I only looked at the "all in the same module" case;
+      I haven't looked into cross-module uses, either Swift–Swift or
+      Swift–Obj-C.
+- Learned that Swift defends its initializer inheritance rules at runtime
+  if called into from Obj-C. Ouch.
+- Sussed out the AnyFoo protocol => generic type erasure dealy.
+
+
+Questions answered today:
+
+- Language:
+    - Does having an `NSObject` in the inheritance hierarchy suddenly mean that
+      Obj-C-y initializer inheritance rules come into play?
+      Or are those just always in play, but only from Obj-C code, if you're
+      calling into a Swift hierarchy from Obj-C?
+        - They're visible still from Obj-C, but not from Swift.
+          This is made clear by the generated header if you use
+          `-emit-objc-header` with `swiftc`. It dumps out a line in the
+          interface for a class like:
+
+          ```objc
+          - (nonnull instancetype)init SWIFT_UNAVAILABLE;
+          ```
+        - If called from Obj-C, even though in the header, they will explode
+          with a fatal error about an unimplemented initializer at runtime.
+          Fun fun! So, uh, don't do that.
+    - What does the "AnyFoo" type-erasure trick _mean,_ and how does it really
+      work?
+        - It substitutes subtype polymorphism for parametric polymorphism.
 
 
 ### Exhaustiveness Games
@@ -433,31 +465,123 @@ partial apply forwarder. That jump slide at the top is weird, too. Why not just
 nops? Padding it out so instructions fall at a certain alignment?
 
 
+### Type Erasure
+Yeah. Let's do this.
+
+Resources:
+
+- https://realm.io/news/type-erased-wrappers-in-swift/
+- https://github.com/bignerdranch/type-erasure-playgrounds
+- http://www.russbishop.net/type-erasure
+- http://www.russbishop.net/inception
+
+#### Type-Erased Wrappers in Swift
+- https://realm.io/news/type-erased-wrappers-in-swift/
+
+"What if we want to treat a protocol as a generic?"
+
+Motivating example:
+
+```
+struct Item {}
+
+struct ItemHolder {
+    var items: Collection<Item>
+}
+```
+
+This bails with:
+
+```
+error: repl.swift:2:25: error: cannot specialize non-generic type 'Collection'
+struct ItemHolder { var items: Collection<Item> }
+                        ^         ~~~~~~
+```
+
+Trying with just bare `: Collection` gives a similar error:
+
+```
+error: repl.swift:2:25: error: protocol 'Collection' can only be used as a generic constraint because it has Self or associated type requirements
+struct ItemHolder { var items: Collection }
+                        ^
+```
+
+Because, well, protocol types aren't generic. If you really mean
+"anything satisfying this protocol", then you're parameterizing your type
+over implementors of that protocol, so _you're_ writing a generic type!
+
+**But why does that only kick in when it comes to `Self` and associated
+types?** Why not every protocol? I suspect implementation constraints
+interfere. But let's see.
+
+Those with `Self` or associated type requirements can put constraints on the
+types that can be substituted as either `Self` or an associated type `Element`,
+such as that `Element` must be `Hashable` or `Equatable` or similar.
+An associated type also means that code using the type has to treat those
+types as generic.
+
+Anyway, back to the article:
+
+- We want to erase the specific concrete type implementing the protocol
+  with associated types.
+- We replace it with a type that's generic over the associated type,
+  and then we can force that generic type to line up with the associated type.
+- We replace it by substituting a concrete type implementing the protocol
+  and generic in the element type. Now our `ItemHolder` is no longer
+  itself generic, as it knows it's talking to a very specific type,
+  our `AnySequence<Item>` type.
+- But we still have the issue of needing to deal with a variety of
+  implementors of that protocol. So we still have genericity around the
+  actual `Sequence` implementor to deal with. We handle that by employing
+  a subclass that adds a generic parameter on top of the one already in
+  `AnySequence<Element>`. This generic parameter is a `T: Sequence`.
+  And it demands that its element type line up with its superclass's Element
+  generic type.
+- To implement `Sequence` without actually having a sequence in our
+  `AnySequence` meant we just had to fatal error out for each method.
+  Oops. The subclass can forward to the underlying type that it's generic over,
+  so it actually implements stuff. This is kinda messy.
+- So now we go ahead and rename `AnySequence<Element>` to an internal
+  `_AnySequenceBoxBase<Element>`, the subclass to
+  `_AnySequenceBox<T: Sequence>: _AnySequenceBoxBase<Sequence.Generator.Element>`,
+  and create a new façade `AnySequence<Element>` that takes a `Sequence`
+  argument, feeds it into a `_AnySequenceBox`, exploits polymorphism by
+  stashing it in a `_AnySequenceBoxBase`, and forwards through to that
+  in its implementation of `Sequence`.
+- Notice how the actual `Sequence` genericity is contained inside a private
+  property of `AnySequence<Element>`, and the `S: Sequence` doesn't show
+  up in its type anywhere? That's the "erasure" bit.
+
+So:
+
+- Generic façade
+- Exploding generic type used as our interface to the actual generic sequence;
+  this is the erasure magic!
+- Functional doubly-generic subclass of the exploding generic type
+
+And we basically end up
+**substituting subtype polymorphism for parametric polymorphism.**
+
+
 ## Unanswered Questions
 - Language:
-    - Does having an `NSObject` in the inheritance hierarchy suddenly mean that
-      Obj-C-y initializer inheritance rules come into play?
-      Or are those just always in play, but only from Obj-C code, if you're
-      calling into a Swift hierarchy from Obj-C?
-        - They're visible still from Obj-C, but not from Swift.
-          This is made clear by the generated header if you use
-          `-emit-objc-header` with `swiftc`. It dumps out a line in the
-          interface for a class like:
-
-          ```objc
-          - (nonnull instancetype)init SWIFT_UNAVAILABLE;
-          ```
-        - If called from Obj-C, even though in the header, they will explode
-          with a fatal error about an unimplemented initializer at runtime.
-          Fun fun! So, uh, don't do that.
-    - What does the "AnyFoo" type-erasure trick _mean,_ and how does it really
-      work?
+    - One more thing on type erasure:
+        - ???: The requirement to use it only for PATs and not for all
+          protocols isn't clear to me semantically, though. (I think it could
+          more readily be made clear to me by implementation operational
+          requirements, but I'm not sure there, either.)
+        - Maybe some insight lies in the other resources I haven't read yet:
+            - https://github.com/bignerdranch/type-erasure-playgrounds
+            - http://www.russbishop.net/type-erasure
+            - http://www.russbishop.net/inception
     - What are the semantics around value capture in a closure?
       What happens when you have racing around a closure, or change a captured
       value after creating the closure?
     - Type aliases can have their access controlled separately from the
       thing they alias. How does extending a type alias impact the access
       level of things in that extension?
+    - Constrained extensions on protocols
+    - Protocol-Oriented Programming review
 
 - Stdlib:
     - Become familiar with its many protocols, particularly those related to
@@ -498,6 +622,7 @@ nops? Padding it out so instructions fall at a certain alignment?
       at runtime? How would you recognize it in a profile to know it matters?
     - What the heck is an archetype? Shows up all over in the
       compiler source, mentioned in then typechecker doc, defined NOWHERE!
+    - What's with the "jump slide" in some function prologs?
 
 - Unsafe Swift:
     - Can we write out a desugaring for all the bridging business to better
