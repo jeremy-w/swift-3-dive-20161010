@@ -99,8 +99,357 @@ Questions answered today are from the LANGUAGE grouping.
         - Expression patterns are only valid in `switch-case` and use
 
 
-### Questions
+## 2016-10-11 (Tues)
+- Poked at enums and exhaustiveness and raw values a bit. The raw assignment
+  really is pretty braindead. This is a good move in terms of predictability
+  and mental modeling, so, I like it.
+
+
+### Exhaustiveness Games
+- Swift fails to note exhaustiveness of a switch over UInt8.
+- More edge case funz to try today:
+    - What happens if I make an enum backed by UInt8 with more than 256 cases?
+        - Overflow error
+    - What if I make an enum backed by Int8 with more than 128 cases - does it
+      start using negative numbers as the raw value eventually?
+        - Overflow error
+    - If I make a non-raw enum with 256 cases and switch/case over it,
+      does it correctly identify it as exhaustive, or does it just flip out
+      past a certain number?
+        - A-OK
+
+
+#### More Cases Than Raw Values: Error
+uint8-enum-256-cases.swift
+
+```python
+s = "enum TooBig: UInt8 {\n" + "\n".join(["    case {0}".format("value" + str(i)) for i in range(0, 257)]) + "\n}\n"
+file("uint8-enum-257-cases.swift", 'w').write(s)
+```
+
+Error emitted twice (???), but correctly handled:
+
+```
+> swift uint8-enum-257-cases.swift
+uint8-enum-257-cases.swift:258:10: error: integer literal '256' overflows when stored into 'UInt8'
+    case value256
+         ^
+uint8-enum-257-cases.swift:258:10: error: integer literal '256' overflows when stored into 'UInt8'
+    case value256
+         ^
+```
+
+
+#### Signed Overflow: Error
+```python
+s = "enum Overflows: Int8 {\n" + "\n".join(["    case {0}".format("value" + str(i)) for i in range(0, 256)]) + "\n}\n"
+file("int8-enum-256-cases.swift", 'w').write(s)
+```
+
+Double output again, this time counting down from 256 to 128 and then again.
+Errors look like:
+
+```
+int8-enum-256-cases.swift:130:10: error: integer literal '128' overflows when stored into 'Int8'
+    case value128
+         ^
+```
+
+So, it simply counts up, then tries to store into the backing value.
+Nothing clever.
+
+
+#### My Own UInt8 Exhaustiveness Check: A-OK
+```python
+s = "enum ManyCases{\n" + "\n".join(["    case {0}".format("value" + str(i)) for i in range(0, 256)]) + "\n\n"
+s += "var uint8: UInt8 {\n  switch self {\n" + "\n".join(["    case .{0}: return {1}".format("value" + str(i), i) for i in range(0, 256)]) + "\n}\n}\n"
+s += "}\n"
+file("my-256-case-enum-exhaustiveness.swift", 'w').write(s)
+```
+
+Compiles just fine.
+
+
+### How do we hand-compile an Obj-C file linking against Swift?
+Say we write a standalone Swift file `Foo.swift`.
+
+We can build it with:
+
+    xcrun -sdk macosx10.12 swiftc -emit-module -emit-objc-header Foo.swift -module-name Foo
+
+and get:
+
+- Foo.swiftmodule
+- Foo.h
+
+Now say we want to `@import Foo` from `UsesFoo.m`. What do we need to do?
+
+#### What Xcode Does
+If you add an Obj-C file to a Swift project, it sets `CLANG_ENABLE_MODULES=YES`
+(so `-fmodules`) and `SWIFT_OBJC_BRIDGING_HEADER`.
+
+- What does `SWIFT_OBJC_BRIDGING_HEADER` change about compilation?
+    - Xcode uses `swift -c` rather than `swiftc`.
+    - It passes `-import-objc-header /Full/Path/To/BridgingHeader.h`.
+        - This isn't doc'd under either `swift --help` or `swiftc --help`.
+          Heck, `swift --help` doesn't even include the `-c` flag!
+    - In debug, the `-enable-testing` flag also gets fed through.
+      It also passes in clang flags via `-Xcc` escaping, like `-DDEBUG=1`.
+- How does Xcode compile a Swift project, anyway?
+    - Xcode's compilation model appears to build each Foo.swift into all of
+      Foo~partial.swiftdoc, Foo~partial.swiftmodule, and Foo.o, but with
+      a module name set to that of the eventual overall module.
+    - It first runs a `swiftc -incremental A.swift B.swift -emit-module
+      -emit-objc-header -import-objc-header Foo-Bridging.h -module-name Foo`
+      thing. Then it goes through each file independently. Weird!
+    - The swiftdeps file dumped with `-emit-reference-dependencies-path` has an
+      interesting list of all the identifiers that it cares about, whether they
+      support dynamic lookup or not, and an interface hash.
+    - After building all the swift files, it then runs a "Merge Module" step.
+      Uses `swift -emit-module` rather than `swift -c`.
+    - There's a fun `-enable-objc-interop` flag used with all the Swift
+      steps. This isn't understood by plain `swift` or plain `swiftc`,
+      but works with its
+      `swift -frontend -c -primary-file A.swift -enable-objc-interop -o A.o`
+      thing.
+    - The -frontend flavor expects its own `-sdk` with a full path to the SDK
+      folder.
+    - The `Foo-Swift.h` header is just the name it uses for the
+      `-emit-objc-header-path` filename.
+    - That header gets `ditto -rsrc`'d over to the DerivedSources folder.
+    - The Foo.swiftmodule gets ditto'd into the built products as
+      `Foo.swiftmodule/x86_64.swiftmodule` (for iPhone simulator).
+    - The `Foo.swiftdoc` goes into `Foo.swiftmodule/x86_64.swiftdoc`.
+- How does Obj-C linking proceed with the Swift stuff?
+    - Compilation includes these interesting flags:
+      `-fmodules -gmodules -fobjc-abi-version=2 -fobjc-legacy-dispatch`
+    - It compiles the file to a `.o` file, so linking is a separate step.
+    - It then invokes `clang` to do the final linking. The folder we dropped
+      the `Foo.swiftmodule/x86_64.swiftmodule` into is added to `-F`.
+      The `-filelist` includes all of the `.o` files, both Swift and Obj-C.
+    - Linking adds `-fobjc-link-runtime` but omits `-fobjc-abi-version=2`
+      in favor of passing a version flag straight through to the linker.
+    - `-Xlinker` is used to pass to the linker:
+      `-export_dynamic -no_deduplicate -objc_abi_version 2`
+    - And the really interesting one:
+      `-Xlinker -add_ast_path -Xlinker Foo.swiftmodule`.
+      But it's the one from /Build/Intermediates not /Build/Products, so it's
+      what we ditto'd over to `x86_64.swiftmodule` in the built products,
+      i.e., the raw `swiftc` module output for our arch.
+
+The "partial then merge" approach is an artefact of Xcode optimizing for
+the common case in a large project of wanting separate compilation.
+At the CLI, I can skip that.
+
+It looks like, when it's in the same module, it does _not_ build a .framework
+hierarchy anywhere. Though it does point `-F` at the folder containing the
+multiarch .swiftmodule bundle.
+
+I don't see it feeding in the -Swift.h generated header anywhere.
+Probably because I'm not actually using any of the Swift stuff from my
+sample Obj-C code. Ah, yeah, you have to manually import the header if
+you need it using angle brackets per the using swift with objc docs.
+
+I wonder if I can separately compile the swift file
+and then run the obj-c file and link against swift directly, or if
+I have to compile both separately, then link them all at the end?
+
+OK, I've got it compiling with me importing the generated Swift header,
+but not linking:
+
+```
+> ./run initializer-inheritance-objc.m
+running: cc -fobjc-arc -fmodules -Xlinker -add_ast_path -Xlinker build/NSSubclass.swiftmodule -F build/ initializer-inheritance-objc.m
+Undefined symbols for architecture x86_64:
+  "_OBJC_CLASS_$__TtC10NSSubclass10NSSubclass", referenced from:
+      objc-class-ref in initializer-inheritance-objc-5f6225.o
+ld: symbol(s) not found for architecture x86_64
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+```
+
+This, I think, is where you need that `.o` file generated during Swift
+compilation.
+
+`swiftc` itself doesn't understand the `-enable-objc-interop` flag.
+
+Looks like you have to bludgeon `swift -frontend -c` into behaving.
+So you want something like `/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.12.sdk/` on hand.
+
+OK, so if you just run:
+
+```
+xcrun -sdk macosx10.12 swift -frontend -c -primary-file initializer-inheritance-and-nsobject.swift -module-name NSSubclass -sdk $SDKPATH -enable-objc-interop -o build/NSSubclass.o
+```
+
+it'll emit just the .o file. It's a legit .o file. You have to pass in all the
+needed swift files so it can resolve references and stuff. The primary file bit
+lets it know which are defined vs imported symbols, I expect.
+
+So you want to `swift` all your files into a module (if you even need it?
+maybe not if you aren't linking other Swift stuff against it), then use
+the frontend to dump the objc-interop file, then you can feed that into
+the compilation of the Obj-C file. And then you're almost there:
+
+```
+running: cc -fobjc-arc -fmodules build/NSSubclass.o initializer-inheritance-objc.m
+ld: library not found for -lswiftDispatch for architecture x86_64
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+```
+
+So we need to link in all the swift library crud.
+That's presumably thanks to the fun undefined symbols in our object file like
+`__swift_FORCE_LOAD_$_swiftDispatch`.
+
+Running find across $SDKPATH garners:
+
+```
+> find $SDKPATH -name '*swiftDispatch*'
+/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX10.12.sdk//System/Library/PrivateFrameworks/Swift/libswiftDispatch.tbd
+```
+
+So, why doesn't Ld barf when Xcode does it? I don't see it doing anything to
+vend the swiftlibs. It appears to copy them in after. Maybe it just tells
+it "fear not, stuff will show up in time for runtime" via some of those
+flags I'm not familiar with, like `-export_dynamic`.
+
+I found the swift libs living under:
+/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/
+
+There are shims and such there, too. The macosx folder has a bunch of dylibs
+and then an x86_64/ folder with a bunch of compiled apinotes, swiftdoc, and
+swiftmodules. So let's try adding that path to -L. And, sure enough, that's
+what I see Xcode doing, too, now that I know to look for it!
+
+Now I just need to resolve my "duplicate symbol main" bit.
+Probably need to pass in the `-parse-as-library` flag when I build the Swift
+file, so it doesn't bundle all the top-level expressions into a C-style
+`main()` function.
+
+And `-parse-as-library` tells it not to allow expressions at top level like
+the `main()` I had in there originally, because it's not a script. So that's
+a very good flag to know!
+
+Ah, it also changes the visibility, though, so that my `internal` class
+is no longer exposed!
+
+And, sure enough:
+
+> Swift methods and properties that are marked with the internal modifier and
+> declared within a class that inherits from an Objective-C class are
+> accessible to the Objective-C runtime. However, they are not accessible at
+> compile time and do not appear in the generated header for a framework
+> target. (https://developer.apple.com/library/content/documentation/Swift/Conceptual/BuildingCocoaApps/MixandMatch.html#//apple_ref/doc/uid/TP40014216-CH10-ID172)
+
+What's funny is that, prior to the `-parse-as-library` bit, it DID export
+the internal names!
+
+And, with that `public`ized, I can build and link a.out. But I can't run it,
+because it expects to dylink against the libswift stuff, and I didn't set
+`@rpath`!
+
+```
+> ./a.out
+dyld: Library not loaded: @rpath/libswiftCore.dylib
+  Referenced from: /Users/jeremy/BNR/unconf-swift-dive/language/./a.out
+  Reason: image not found
+fish: './a.out' terminated by signal SIGTRAP (Trace or breakpoint trap)
+```
+
+And, at last, I have the answer I was looking for: You can call it from
+Obj-C, but Swift dynamically enforces its own initializer rules:
+
+```
+> ./a.out
+initializer-inheritance-and-nsobject.swift: 4: 14: fatal error: use of unimplemented initializer 'init()' for class 'NSSubclass.NSSubclass'
+fish: './a.out' terminated by signal SIGILL (Illegal instruction)
+```
+
+Backtrace looks like:
+
+```
+(lldb) bt
+* thread #1: tid = 0x257dea6, 0x0000000100001811 a.out`NSSubclass.NSSubclass.init () -> NSSubclass.NSSubclass + 161, queue = 'com.apple.main-thread', stop reason = EXC_BAD_INSTRUCTION (code=EXC_I386_INVOP, subcode=0x0)
+  * frame #0: 0x0000000100001811 a.out`NSSubclass.NSSubclass.init () -> NSSubclass.NSSubclass + 161
+    frame #1: 0x0000000100001871 a.out`@objc NSSubclass.NSSubclass.init () -> NSSubclass.NSSubclass + 17
+    frame #2: 0x00000001000027f7 a.out`main + 39
+    frame #3: 0x00007fff803255ad libdyld.dylib`start + 1
+```
+
+So it looks like it intentionally overrid it just to trip a `fatalError`.
+
+The disassembly is, uh, "fun":
+
+```
+a.out`NSSubclass.NSSubclass.init () -> NSSubclass.NSSubclass:
+    0x100001770 <+0>:   pushq  %rbp
+    0x100001771 <+1>:   movq   %rsp, %rbp
+    0x100001774 <+4>:   subq   $0x10, %rsp
+    0x100001778 <+8>:   movq   %rdi, -0x8(%rbp)
+    0x10000177c <+12>:  jmp    0x10000177e               ; <+14>
+    0x10000177e <+14>:  jmp    0x100001780               ; <+16>
+    0x100001780 <+16>:  jmp    0x100001782               ; <+18>
+    0x100001782 <+18>:  jmp    0x100001784               ; <+20>
+    0x100001784 <+20>:  jmp    0x100001786               ; <+22>
+    0x100001786 <+22>:  jmp    0x100001788               ; <+24>
+    0x100001788 <+24>:  jmp    0x10000178a               ; <+26>
+    0x10000178a <+26>:  jmp    0x10000178c               ; <+28>
+    0x10000178c <+28>:  jmp    0x10000178e               ; <+30>
+    0x10000178e <+30>:  jmp    0x100001790               ; <+32>
+    0x100001790 <+32>:  leaq   0x1979(%rip), %rax
+    0x100001797 <+39>:  addq   $0x10, %rax
+    0x10000179b <+43>:  movl   $0x50, %ecx
+    0x1000017a0 <+48>:  movl   %ecx, %esi
+    0x1000017a2 <+50>:  movl   $0x7, %ecx
+    0x1000017a7 <+55>:  movl   %ecx, %edx
+    0x1000017a9 <+57>:  movq   %rax, %rdi
+    0x1000017ac <+60>:  callq  0x100001e80               ; rt_swift_allocObject
+    0x1000017b1 <+65>:  leaq   0x1298(%rip), %rsi        ; "NSSubclass.NSSubclass"
+    0x1000017b8 <+72>:  movl   $0x15, %ecx
+    0x1000017bd <+77>:  movl   %ecx, %edx
+    0x1000017bf <+79>:  movl   $0x2, %ecx
+    0x1000017c4 <+84>:  leaq   0x6c5(%rip), %r8          ; partial apply forwarder for Swift.(_unimplementedInitializer (className : Swift.StaticString, initName : Swift.StaticString, file : Swift.StaticString, line : Swift.UInt, column : Swift.UInt) -> Swift.Never).(closure #1)
+    0x1000017cb <+91>:  leaq   0x129e(%rip), %r9         ; "initializer-inheritance-and-nsobject.swift"
+    0x1000017d2 <+98>:  leaq   0x128d(%rip), %r10        ; "init()"
+    0x1000017d9 <+105>: movq   %r10, 0x10(%rax)
+    0x1000017dd <+109>: movq   $0x6, 0x18(%rax)
+    0x1000017e5 <+117>: movb   $0x2, 0x20(%rax)
+    0x1000017e9 <+121>: movq   %r9, 0x28(%rax)
+    0x1000017ed <+125>: movq   $0x2a, 0x30(%rax)
+    0x1000017f5 <+133>: movb   $0x2, 0x38(%rax)
+    0x1000017f9 <+137>: movq   $0x4, 0x40(%rax)
+    0x100001801 <+145>: movq   $0xe, 0x48(%rax)
+    0x100001809 <+153>: movq   %rax, %r9
+    0x10000180c <+156>: callq  0x100001a20               ; function signature specialization <preserving fragile attribute, Arg[1] = [Closure Propagated : reabstraction thunk helper from @callee_owned (@unowned Swift.UnsafeBufferPointer<Swift.UInt8>) -> () to @callee_owned (@unowned Swift.UnsafeBufferPointer<Swift.UInt8>) -> (@out ()), Argument Types : [@callee_owned (@unowned Swift.UnsafeBufferPointer<Swift.UInt8>) -> ()]> of generic specialization <preserving fragile attribute, ()> of Swift.StaticString.withUTF8Buffer <A> ((Swift.UnsafeBufferPointer<Swift.UInt8>) -> A) -> A
+->  0x100001811 <+161>: ud2
+    0x100001813 <+163>: nopw   %cs:(%rax,%rax)
+```
+
+That specialization / fragile reabstraction thunk closure attribute / generic
+specialization stuff is interesting. Also interesting that it allocates the
+object, only to die via the `_unimplementedInitializer`. I didn't pass any
+particular optimization level in, so maybe this'd get more simplified at higher
+optimization levels. But you can see it loading up the arguments for that
+partial apply forwarder. That jump slide at the top is weird, too. Why not just
+nops? Padding it out so instructions fall at a certain alignment?
+
+
+## Unanswered Questions
 - Language:
+    - Does having an `NSObject` in the inheritance hierarchy suddenly mean that
+      Obj-C-y initializer inheritance rules come into play?
+      Or are those just always in play, but only from Obj-C code, if you're
+      calling into a Swift hierarchy from Obj-C?
+        - They're visible still from Obj-C, but not from Swift.
+          This is made clear by the generated header if you use
+          `-emit-objc-header` with `swiftc`. It dumps out a line in the
+          interface for a class like:
+
+          ```objc
+          - (nonnull instancetype)init SWIFT_UNAVAILABLE;
+          ```
+        - If called from Obj-C, even though in the header, they will explode
+          with a fatal error about an unimplemented initializer at runtime.
+          Fun fun! So, uh, don't do that.
     - What does the "AnyFoo" type-erasure trick _mean,_ and how does it really
       work?
     - What are the semantics around value capture in a closure?
@@ -147,6 +496,8 @@ Questions answered today are from the LANGUAGE grouping.
         - This could become a rabbit hole very quickly.
     - What can you do to speed things up? What are surprising losses of speed
       at runtime? How would you recognize it in a profile to know it matters?
+    - What the heck is an archetype? Shows up all over in the
+      compiler source, mentioned in then typechecker doc, defined NOWHERE!
 
 - Unsafe Swift:
     - Can we write out a desugaring for all the bridging business to better
