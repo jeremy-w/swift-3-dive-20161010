@@ -84,7 +84,7 @@ Questions answered today are from the LANGUAGE grouping.
         - **Case exhaustiveness is kind of derpy.**
           I used Python to generate an exhaustive identity function for `UInt8`
           - one case for each of 0 through 255 - and still got the "consider
-            a default" error. See [exhaustive-uint8.swift][].
+            a default" error. See [exhaustive-uint8.swift](language/exhaustive-uint8.swift).
         - Constant declarations are identifier pattern matches.
           So you can do `let (a, b) = (1, 2)` to define `a` and `b`.
             - Identical to 1-tuple patterns, too:
@@ -673,8 +673,10 @@ Today's questions:
             - Loading mutators into the global concurrent queue should do it.
             - Hrm, using a struct is no good, because can't weakify!
               Well, boxed it, and weakified that. Only marginally less racey.
-            - Check out [language/closure-racer.swift][] and
-              [language/weak-closure-racer.swift][].
+            - Check out [language/closure-racer.swift](language/closure-racer.swift) and
+              [language/weak-closure-racer.swift](language/weak-closure-racer.swift).
+
+
 ### Type Erasure, Cont'd
 Maybe some insight lies in the other resources I haven't read yet?
 
@@ -762,7 +764,7 @@ for PATs but not regular protocols?" question. See PDF page 102,
         - The default impl in the protocol extension will run if not
           "overridden", otherwise, the type's own version runs, because we
           do always know the type statically. "The magic of static dispatch."
-        - See: [language/default-dispatch-and-self-types.swift][]
+        - See: [language/default-dispatch-and-self-types.swift](language/default-dispatch-and-self-types.swift)
 
 > a Self-requirement puts Drawable squarely in the homogeneous, statically
 > dispatched world, right? But Diagram really needs a heterogeneous array of
