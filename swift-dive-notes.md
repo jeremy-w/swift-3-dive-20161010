@@ -563,25 +563,307 @@ And we basically end up
 **substituting subtype polymorphism for parametric polymorphism.**
 
 
-## Unanswered Questions
+
+## 2016-10-12 (Wed)
+- Read a bit more on type erasure. A natural segue into the stdlib.
+- Reviewed protocol-oriented programming talk.
+- Its "two worlds" slide helped me think through my question about why
+  PATs drove us into generic land but plain protocols do not.
+    - The associated types are all concrete types and must be the _same_
+      concrete type throughout. They are determined by the conforming class,
+      and users of that class thus necessarily become generic in the
+      protocol conformer's associated types. Helped to think through the
+      "collections of associated types fed back into the protocol conformer"
+      scenario.
+    - This sounds a lot like Haskell's functional dependencies for typeclasses,
+      but I'm not clear on how protocols and typeclasses related.
+- Poked a bit at Haskell typeclasses vs Swift protocols.
+    - Russ Bishop likens them in
+      ["Swift: Associated Types"](http://www.russbishop.net/swift-associated-types)
+      more to
+      [Scala abstract type members](http://docs.scala-lang.org/tutorials/tour/abstract-types.html).
+    - I dropped this as taking me too far afield, though.
+- Poked at variance of generics and functions.
+    - Functions are contravariant in their arguments (and covariant in their
+      return values), but this **clashes with** generic parameters' covariance.
+    - Swift lacks an annotation like Scala's `-T`
+      [variance annotation](http://docs.scala-lang.org/tutorials/tour/variances.html)
+      to let us solve this.
+        - Obj-C has it, though!
+
+          > A generic parameter in Objective-C can be annotated with
+          > `__covariant` to indicate that subtypes are acceptable, and
+          > `__contravariant` to indicate that supertypes are acceptable. This
+          > can be seen in the interface for `NSArray`, among others
+          > ([Mike Ash, "Covariance and Contravariance", 20 Nov 2015](https://mikeash.com/pyblog/friday-qa-2015-11-20-covariance-and-contravariance.html))
+    - Protocol "inheritance" doesn't quite act like class inheritance:
+      You **can't substitute `InheritsP` for `P` at the type level,**
+      but you can at the value level.
+      So `let type: P.Protocol = InheritsP.self` errors out,
+      but `struct S: InheritsP {}; let value: P = S()` is fine.
+        - More to the point, you can't pass in any type `T` conforming to
+          `P` - struct, class, enum, protocol, what have you - as a `P`.
+          So you can't be like `func callsStaticFunc(on p: P.Protocol)`
+          and then do `callsStaticFunc(StructImplementingP.self)`,
+          even though you can call that static func on `StructImplemingP`
+          directly. You'd have to move to a generic function here instead:
+          `func callsStaticFunc<T: P>(on: T.Type)`.
+    - In another strike against the term,
+      **an inheriting protocol cannot override and broaden parameter type
+      of a parent protocol.** Weird, weird stuff.
+        - You can fake the classic behavior by adding a default implementation
+          for the inherited requirement that forwards to the broader version,
+          though.
+- Found that extensions to private typealiases act like extending the
+  underlying type. The typealias is invisible, but the functions in the
+  extension on it are as visible as ever. Nifty.
+- Verified that, yes, closures' capture-by-reference behavior means that
+  you can have fun with race conditions around mutable value types like
+  structs. Oh, joy!
+
+Today's questions:
+
 - Language:
     - One more thing on type erasure:
         - ???: The requirement to use it only for PATs and not for all
           protocols isn't clear to me semantically, though. (I think it could
           more readily be made clear to me by implementation operational
           requirements, but I'm not sure there, either.)
-        - Maybe some insight lies in the other resources I haven't read yet:
-            - https://github.com/bignerdranch/type-erasure-playgrounds
-            - http://www.russbishop.net/type-erasure
-            - http://www.russbishop.net/inception
-    - What are the semantics around value capture in a closure?
-      What happens when you have racing around a closure, or change a captured
-      value after creating the closure?
+    - XXX: How do Swift protocols compare to Haskell typeclasses?
+        - **Shelved.**    - Is `Array<Subclass>` substitutable for `Array<Superclass>`?
+    - Is `Array<Subclass>` substitutable for `Array<Superclass>`?
+      (AKA: Are arrays covariant?) YES.
+        - What about `[AnyCollection<Subclass>]` vs
+          `[AnyCollection<Superclass>]`?
+          Inference produced just `[Any]` in the
+          `objCDays = [AnyDetailRow(SmallFileCell()), AnyDetailRow(LargeFolderCell())]`
+          example in slide 10 of Robert's CoreDataStack Type Erasure talk, but
+          need to repro.
+            - That wasn't a subclass:superclass relationship; they were two
+              unrelated model types.
     - Type aliases can have their access controlled separately from the
       thing they alias. How does extending a type alias impact the access
       level of things in that extension?
+        - It appears that it doesn't! At all. A
+          `private typealias PrivateFoo = Foo`
+          can be extended, and the functions in that extension default to
+          `internal` the same as ever. Callers outside the file can't see
+          the typealias but can see the functions declared in the extension
+          on that typealias. Huh.
+    - What are the semantics around value capture in a closure?
+        - Everything is captured by reference. Even value types.
+    - Or change a captured value after creating the closure?
+        - The closure sees the update via the reference.
+        - [TSPL](https://developer.apple.com/library/content/documentation/Swift/Conceptual/Swift_Programming_Language/Closures.html#//apple_ref/doc/uid/TP40014097-CH11-ID94)
+            - Operator methods are new to me. `names.sorted(by: >)` works.
+            - Section on "Capturing Values" calls out that it captures
+              by reference, even to value types, though might copy-in
+              values as an optimization if they are not mutated in the
+              closure *or in the scope following the closure's definition.*
+            - Functions and closures themselves are reference types.
+    - What happens when you have racing around a closure?
+      Exactly what you would expect: BAD THINGS.
+        - Well, it's just a normal reference, so it could go wonky.
+          Weak captures might actually offer more protection here,
+          since zeroing requires atomicity.
+        - I'm having trouble coming up with a good test case, though.
+          We need a closure to capture some (preferably large, in terms of
+          value storage!) value, then alternate calling it and mutating
+          the value, and see if it goes weird.
+            - Loading mutators into the global concurrent queue should do it.
+            - Hrm, using a struct is no good, because can't weakify!
+              Well, boxed it, and weakified that. Only marginally less racey.
+            - Check out [language/closure-racer.swift][] and
+              [language/weak-closure-racer.swift][].
+### Type Erasure, Cont'd
+Maybe some insight lies in the other resources I haven't read yet?
+
+- https://github.com/bignerdranch/type-erasure-playgrounds
+- http://www.russbishop.net/type-erasure
+    - http://www.russbishop.net/swift-associated-types et seq.
+    - http://www.russbishop.net/swift-associated-types-cont is **the goods:**
+      Directly addresses "What is an existential?" and talks about mitigations
+      from the "Completing Generics" manifesto to lift the "must be generic"
+      requirement by punting to runtime dynamicism:
+
+      - "generalized existentials": The associated type just turns into
+        `Any` when you try to work with it. You're on your own, now!
+      - "opening existentials": Allows to bridge existential=>generic by
+        letting you switch on the underlying type in the code and then
+        use that known type as a generic parameter, as with `Equatable`'s
+        `Self`.
+- http://www.russbishop.net/inception
+    - Wonder what this trick is:
+
+      > The standard library takes extra steps to make sure if you call
+      > a method like `drop(first:)` repeatedly it doesn't double-wrap the
+      > sequence.
+
+      Turns out it's just using an internal type that takes care of
+      intercepting the call and not doubly-wrapping, as
+      [here](https://github.com/apple/swift/blob/be1f95a65b6d1688d94d3342cb0c231d4853e542/stdlib/public/core/Sequence.swift#L660)
+    - This is a great, quick walkthrough, though with some weird references
+      to *Inception* that obscure the point a bit. But for example:
+
+      > Doing it this way lets us move the ❓ into the initializer, instead of
+      > being part of the definition of AnyFancy. The initializer needs
+      > a second type parameter U so it can construct the box subclass. Once
+      > the initializer is done the concrete type information has disappeared
+      > down a black hole, hidden behind the box subclass never again to wake.
+      > Hurray for type erasure.
+
+
+#### CoreDataStack & Type Erasure
+https://github.com/bignerdranch/type-erasure-playgrounds
+
+- Erasure by proxying directly to stored closures. Closure captures the
+  concrete type and hides it thereafter.
+    - Requires capturing getter and setter separately for properties.
+      Fun.
+- Names the three components of the pattern seen in stdlib (and that I went
+  through yesterday) as Abstract Base, Private Box, and Public Wrapper.
+    - Needs to fatalError out both getter and setter for properties.
+      I was thinking of functions, not properties, the other day, so
+      this is a little wrinkle.
+- Some good links at the end - some are the ones I have already, others
+  are new.
+
+
+### Protocol-Oriented Programming
+Protocol-Oriented Programming review:
+[WWDC 2015 #408](https://developer.apple.com/videos/play/wwdc2015/408/)
+
+Calls out that protocols allow **retroactive modeling** (you can opt a type
+into a protocol unilaterally, later, via an extension) and
+**avoid forcing instance data** onto implementors, and the corresponding
+initialization complexities of ivars, too.
+
+> An interaction between instances no longer implies an interaction between all
+> model types. We trade dynamic polymorphism for static polymorphism, but, in
+> return for that extra type information we're giving the compiler, it's more
+> optimizable. So, two worlds.
+
+Contrasts protocols with self-type constraints to those without.
+I think this might be the lead into answering my "why the generic requirement
+for PATs but not regular protocols?" question. See PDF page 102,
+"Two Worlds of Protocols":
+
+- Heterogeneous vs homogeneous
+- Occurrence of a regular protocol type in that protocol itself subjects
+  conforming types to the same ??? about the concrete type as anyone else
+  (they call this "interaction" of types in the slide)
+- Dynamic vs static dispatch
+    - If `T` knows that this arg to a protocol method is also a `T`,
+      then we can statically dispatch calls to functions on that type.
+    - Wonder how that interacts with default method dispatch…
+        - And you can't have both homogeneous and heterogeneous in the same
+          protocol: The "protocol has to be a generic constraint" rule
+          applies even to functions declared *in the protocol itself!*
+        - The default impl in the protocol extension will run if not
+          "overridden", otherwise, the type's own version runs, because we
+          do always know the type statically. "The magic of static dispatch."
+        - See: [language/default-dispatch-and-self-types.swift][]
+
+> a Self-requirement puts Drawable squarely in the homogeneous, statically
+> dispatched world, right? But Diagram really needs a heterogeneous array of
+> Drawables, right? So we can put polygons and circles in the same Diagram. So
+> Drawable has to stay in the heterogeneous, dynamically dispatched world. And
+> we've got a contradiction. Making Drawable equatable is not going to work.
+
+Treats required methods as "customization points", while non-required
+extensions cannot be overridden if calling through purely the protocol
+type (not relevant for PATs, of course: you can't just use a protocol type
+with those requirements).
+
+
+### Answering My "One More Question": Why PATs Force Genericity
+What is going on is that, while protocols are "some type T meeting this requirement", associated types and self types are specific, concrete types - we get
+equations derived from the (unknown at time of use) protocol conforming type.
+So code using a PAT is open to whatever `T` implements the `PAT`, but then
+is necessarily generic in terms of the associated types and self types.
+If we call `pat.foo(associatedThing: thing)`, that has to be `pat`'s own
+`associatedThing`, and not some other `U: PAT`'s.
+
+This isn't an implementation requirement, then, but a necessary requirement
+to make using functions that work in terms of associated types or Self types
+usable.
+
+There are similarities here to
+[functional dependencies.](https://wiki.haskell.org/Functional_dependencies)
+(See also: [the GHC docs on fdeps.](https://downloads.haskell.org/~ghc/7.4.1/docs/html/users_guide/type-class-extensions.html#functional-dependencies))
+The (eventual) choice of implementing type `T: PAT` fully determines the types
+of the associated types and of `Self`.
+
+**Type erasure lets us write code generic around the type we care about
+parameterizing over while constraining generic variation around a PAT to an
+implementation detail.** "Quarantine the angle-bracket virus!"
+
+Or in the case of the `ItemHolder` example from earlier, it lets us
+demand homogeneity of `Item` type, while allowing heterogeneity of
+`Collection` choice. We can have an `[ItemHolder<Int>]` where the
+`Collection` varies between `Array` and `Set` and `Dictionary`.
+
+
+### Docs bug: Protocols are missing "Inherited by" list of child protocols
+**Docs bug:** The [`Collection` docs](https://developer.apple.com/reference/swift/collection#relationships)
+omit listing `MutableCollection` in the "Adopted by" section, though the
+[`MutableCollection` docs](https://developer.apple.com/reference/swift/mutablecollection#relationships)
+do list `Collection` in its "Inherits" section.
+Or perhaps there needs to be a separate
+"Inherited by" section? All of the "Adopted by"s seem to be structures,
+not protocols.
+
+Same deal with Collection and Sequence.
+(Though Sequence does manually list Collection among its Related Symbols, it's
+not even hyperlinked!)
+
+
+## Haskell Typeclasses & Swift PATs
+http://www.slideshare.net/alexis_gallagher/protocols-with-associated-types-and-how-they-got-that-way
+
+- Say they are analogous WRT generic stuff, but as part of comparison with
+  generic stuff across many languages.
+
+- Points at
+  https://github.com/apple/swift/blob/master/stdlib/public/core/Existential.swift#L13;
+  presumably talk had some commentary not present in slide.
+
+
+https://touk.pl/blog/2015/09/14/typeclasses-in-swift/
+
+- Haskell, Scala, Swift. No deep thoughts, just a cross-comparison.
+- The `protocol Foo { associatedtype T; func foo(_: T) -> String }` to
+  `protocol Foo { func foo(_: Self) -> String }` transform as a way to work
+  around not being able to automatically wrap a type in an adapter as Scala
+  does with its implicit contexts is an interesting rewrite rule, though!
+- The generic requirement imposed by PATs is a lot less annoying with free
+  functions than with structs or classes. Less need to bother with type
+  erasure, it feels like.
+
+
+https://siejkowski.net/typeclasses-in-swift
+
+- Same thing, but on the author's personal blog, and with some slightly
+  different intro and outro.
+
+
+http://amixtureofmusings.com/2016/05/19/associated-types-and-haskell/
+
+- Only mentions Rust and Swift in passing WRT monomorphization and static
+  dispatch cropping up.
+- Mostly about the difference in semantics between functions that work with
+  Haskell typeclasses vs functions that work with Java interfaces,
+  and how you can use the associated types of type families to get
+  the behavior you intend in a specific case.
+
+
+
+## 2016-10-13 (Thurs)
+
+
+## Unanswered Questions
+- Language:
     - Constrained extensions on protocols
-    - Protocol-Oriented Programming review
 
 - Stdlib:
     - Become familiar with its many protocols, particularly those related to
@@ -589,6 +871,12 @@ And we basically end up
         - **Produce a one-line "the gist of this protocol" for each.**
     - How does lazy work, and what's the impact?
     - What about slices and contiguous arrays?
+    - Good practical example of when you should intentionally use one of the
+      more abstract protocol types in section "Who needs types like that?"
+      of [Rob Napier's "A Little Respect for AnySequence"](http://robnapier.net/erasure)
+      (published 4th Aug 2015): Use them as return values to avoid leaking
+      implementation details that surface in types. As arguments, you still
+      want the protocol itself. It also demos the forwarding-closure approach.
 
 - Community:
     - How does open source Swift work, how is it organized, and who's involved?
