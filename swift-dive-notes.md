@@ -1147,6 +1147,11 @@ actual name… Howzabout `nameN`?
 > mv foo archetype.swift
 ```
 
+Oh, and still not helpful, since inside a generic function.
+Maybe if we move them inside a generic struct?
+Nope. We'll have to make our own examples after all.
+
+
 ## Unanswered Questions
 - Community:
     - How does open source Swift work, how is it organized, and who's involved?
