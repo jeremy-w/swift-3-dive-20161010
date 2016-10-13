@@ -867,12 +867,14 @@ http://amixtureofmusings.com/2016/05/19/associated-types-and-haskell/
   since I last looked! What's missing is more meaningful grouping of
   docs in the overall survey list; the concise summaries of what things
   do are already written, though.
-- Resolved my "what in blazes is an archetype?" question.
+- Mostly resolved my "what in blazes is an archetype?" question.
   Tests and the ABI mangling docs to the rescue!
     - An **archetype** is an unknown concrete type conforming to a protocol
       type or acting as a protocol's associated type.
     - Contrasted with an **existential,** which is the protocol used as a type
       itself.
+    - But what of "dependent generic types"? I _think_ those are also
+      archetypes, but, well. Not sure.
 
 Questions answered today:
 
@@ -910,6 +912,9 @@ Questions answered today:
       implementation details that surface in types. As arguments, you still
       want the protocol itself. It also demos the forwarding-closure approach.
 
+- Debugging/implementation/perf:
+    - What the heck is an archetype? Shows up all over in the
+      compiler source, mentioned in then typechecker doc, defined NOWHERE!
 
 
 ### Constrained extensions on protocols
@@ -1152,14 +1157,31 @@ Maybe if we move them inside a generic struct?
 Nope. We'll have to make our own examples after all.
 
 
-## Unanswered Questions
-- Community:
-    - How does open source Swift work, how is it organized, and who's involved?
-    - What's up with the package manager?
-        - An intro to this might be useful if there's not already a good one
-          out there.
 
+## 2016-10-14 (Fri)
+Plans for this last day. This is probably still too much, but, alas:
+
+- Read MarkD's AdviOS content on Swift and Obj/C bridging.
+- Look at what access control changes do to emitted names in a binary.
+- Read the optimization notes from the Swift docs.
+- Scope out the Swift Package Manager, minimally. Try to run through a quick
+  "getting started" example.
+    - Does Swift on Linux have Obj-C interop support, too?
+      GCC can compile Obj-C, after all.
+- Look into what a "dependent generic type" is.
+- Watch the SIL talk from a year or two ago.
+
+
+
+## Unanswered Questions
 - Debugging/Implementation/Perf:
+    - What effect do access controls have on the compiled binary?
+        - Compiler aside, protocols are kind of weird around access control,
+          with a lot of against-the-grain behaviors, like members having
+          the same public access level as a public protocol.
+    - What can you do to speed things up? What are surprising losses of speed
+      at runtime? How would you recognize it in a profile to know it matters?
+    - What's a "dependent generic type", and how does it relate to archetypes?
     - What does disassembled Swift look like?
         - Common prolog
         - Common postlog
@@ -1175,16 +1197,8 @@ Nope. We'll have to make our own examples after all.
       generate at the compiled level?
     - How are protocols implemented?
     - How does cross-module interaction work?
-    - What effect do access controls have on the compiled binary?
-        - Compiler aside, protocols are kind of weird around access control,
-          with a lot of against-the-grain behaviors, like members having
-          the same public access level as a public protocol.
     - What's up with SIL, and can I do useful things with it programmatically?
         - This could become a rabbit hole very quickly.
-    - What can you do to speed things up? What are surprising losses of speed
-      at runtime? How would you recognize it in a profile to know it matters?
-    - What the heck is an archetype? Shows up all over in the
-      compiler source, mentioned in then typechecker doc, defined NOWHERE!
     - What's with the "jump slide" in some function prologs?
 
 - Unsafe Swift:
@@ -1199,4 +1213,10 @@ Nope. We'll have to make our own examples after all.
     - Why does everything go insane and into the weeds when I try to pass
       a dictionary literal as-is into `SecAddItem`, but if I declare the
       dictionary as `: NSDictionary`, suddenly everything is hunky-dory?
+
+- Community:
+    - What's up with the package manager?
+        - An intro to this might be useful if there's not already a good one
+          out there.
+    - How does open source Swift work, how is it organized, and who's involved?
 
