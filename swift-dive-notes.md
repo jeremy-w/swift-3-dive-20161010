@@ -861,25 +861,293 @@ http://amixtureofmusings.com/2016/05/19/associated-types-and-haskell/
 
 
 ## 2016-10-13 (Thurs)
+- Poked at protocol extensions & generics, which led into looking at
+  name mangling as a reification of overload set generation.
+- Looked into the stdlib. The docs around this have improved tremendously
+  since I last looked! What's missing is more meaningful grouping of
+  docs in the overall survey list; the concise summaries of what things
+  do are already written, though.
+- Resolved my "what in blazes is an archetype?" question.
+  Tests and the ABI mangling docs to the rescue!
+    - An **archetype** is an unknown concrete type conforming to a protocol
+      type or acting as a protocol's associated type.
+    - Contrasted with an **existential,** which is the protocol used as a type
+      itself.
 
+Questions answered today:
 
-## Unanswered Questions
 - Language:
     - Constrained extensions on protocols
 
 - Stdlib:
+    - How does `lazy` work, and what's the impact?
+        - Lazy on properties: Closure gets run the first time it's accessed.
+          (Global statics are implicitly lazy.) Has access to `self` because
+          the access happens after `init`.
+        - The `lazy` property on sequences, collections, etc:
+          Vends a type whose `map` and `filter` and such run lazily
+          rather than eagerly. Basically a batch to streaming conversion.
+    - What about slices and contiguous arrays?
+        - Slice: Just a view onto an `Indexable` (forward index + subscript),
+          basically, a chunk of the functionality of `Collection`. Acts as
+          a `Collection` itself.
+            - Docs warn that this holds a reference indirectly to the whole
+              collection, so a tiny slice can keep a large collection alive.
+              **Just uses slices transiently - don't store them.**
+        - ContiguousArray: Guarantees contiguous layout, vs using an
+          `NSArray`. Only really matters if you're dealing with a class
+          or `@objc` protocol. **Unlike Array, it doesn't autobridge to
+          Obj-C.** (This is both its main advantage and main disadvantage.)
     - Become familiar with its many protocols, particularly those related to
       collections
         - **Produce a one-line "the gist of this protocol" for each.**
-    - How does lazy work, and what's the impact?
-    - What about slices and contiguous arrays?
-    - Good practical example of when you should intentionally use one of the
-      more abstract protocol types in section "Who needs types like that?"
+        - Wow, this is so much easier now that the docs team has had a solid
+          crack at the stdlib!
+    - NOTE: Good practical example of when you should intentionally use one of
+      the more abstract protocol types in section "Who needs types like that?"
       of [Rob Napier's "A Little Respect for AnySequence"](http://robnapier.net/erasure)
       (published 4th Aug 2015): Use them as return values to avoid leaking
       implementation details that surface in types. As arguments, you still
       want the protocol itself. It also demos the forwarding-closure approach.
 
+
+
+### Constrained extensions on protocols
+What all's possible around here?
+
+[TSPL3: Extension Declaration](https://developer.apple.com/library/content/documentation/Swift/Conceptual/Swift_Programming_Language/Declarations.html#//apple_ref/swift/grammar/extension-declaration)
+
+> Extension declarations can’t contain deinitializer or protocol declarations,
+> stored properties, property observers, or other extension declarations.
+
+Uses the term "adopted protocols" for the protocols. I guess because the
+extension is opting into it.
+
+>  Properties, methods, and initializers of an existing type
+>  **can’t be overridden** in an extension of that type.
+
+Pulls in the "generic-where-clause", which is where the magic happens.
+See [Generic Where Clauses](https://developer.apple.com/library/content/documentation/Swift/Conceptual/Swift_Programming_Language/GenericParametersAndArguments.html#//apple_ref/swift/grammar/generic-where-clause).
+
+I think the big key is that the constraints and protocol requirements all
+factor into computing an overload set:
+
+> You can overload a generic function or initializer by providing different
+> constraints, requirements, or both on the type parameters. When you call an
+> overloaded generic function or initializer, the compiler uses these
+> constraints to resolve which overloaded function or initializer to invoke. 
+
+You can see this in the compiled name, so these two extensions:
+
+```
+protocol ExtendMe {
+    associatedtype Item
+    var items: AnyCollection<Item> { get }
+}
+
+extension ExtendMe
+    where Item == Int {
+    var sum: Int {
+        return items.reduce(0, +)
+    }
+}
+
+extension ExtendMe
+    where Item: BitwiseOperations {
+    var sum: Item {
+        return items.reduce(Item.allZeros, |)
+    }
+}
+```
+
+Generate a binary with these names:
+
+```
+> nm build/constrained_extensions | grep ExtendMe
+00000001000011b0 t __TFe22constrained_extensionsRxS_8ExtendMewx4Items17BitwiseOperationsrS0_g3sumwxS1_
+0000000100000de0 t __TFe22constrained_extensionsRxS_8ExtendMewx4ItemzSirS0_g3sumSi
+00000001000042a8 s __TMp22constrained_extensions8ExtendMe
+0000000100001090 t __TPA__TTRGRx22constrained_extensions8ExtendMewx4ItemzSirXFo_dSidSi_dSizoPs5Error__XFo_iSiiSi_iSizoPS2___
+0000000100000f80 t __TTRGRx22constrained_extensions8ExtendMewx4ItemzSirXFo_dSidSi_dSizoPs5Error__XFo_iSiiSi_iSizoPS2___
+```
+
+And demangled (and reformatted manually for readability' sake):
+
+```
+> nm build/constrained_extensions | grep ExtendMe | xcrun swift-demangle
+00000001000011b0 t
+    _(extension in constrained_extensions):
+    constrained_extensions.ExtendMe
+        <A where
+            A: constrained_extensions.ExtendMe,
+            A.Item: Swift.BitwiseOperations
+        >.sum.getter : A.Item
+
+0000000100000de0 t
+    _(extension in constrained_extensions):
+    constrained_extensions.ExtendMe
+        <A where
+            A: constrained_extensions.ExtendMe,
+            A.Item == Swift.Int
+        >.sum.getter : Swift.Int
+
+00000001000042a8 s
+    _protocol descriptor for
+        constrained_extensions.ExtendMe
+
+0000000100001090 t
+    _partial apply forwarder for
+        reabstraction thunk helper
+            <A where
+                A: constrained_extensions.ExtendMe,
+                A.Item == Swift.Int
+            > from
+                @callee_owned (@unowned Swift.Int, @unowned Swift.Int)
+                    -> (@unowned Swift.Int, @error @owned Swift.Error)
+              to
+                @callee_owned (@in Swift.Int, @in Swift.Int)
+                    -> (@out Swift.Int, @error @owned Swift.Error)
+
+0000000100000f80 t
+    _reabstraction thunk helper
+        <A where
+            A: constrained_extensions.ExtendMe,
+            A.Item == Swift.Int
+        > from
+            @callee_owned (@unowned Swift.Int, @unowned Swift.Int)
+                -> (@unowned Swift.Int, @error @owned Swift.Error)
+          to
+            @callee_owned (@in Swift.Int, @in Swift.Int)
+                -> (@out Swift.Int, @error @owned Swift.Error)
+```
+
+Reabstraction thunks look to be used to handle differences in
+argument or return passing conventions, or to paper over Swift/Obj-C differences.
+See
+[specialize_partial_apply.swift](https://github.com/apple/swift/blob/master/test/SILOptimizer/specialize_partial_apply.swift#L17)
+in the Swift implementation for one example.
+
+Also note how `throws` is handled by creating a function that returns
+a 2-tuple of `(Value, Error)`.
+
+
+### Stdlib Protocols in a Nutshell
+Huh, the stdlib reference already does this with a one-sentence
+highlight for each type. They're not grouped or organized beyond
+type (class, protocol, struct), though, so doing that would improve
+things. Can we import into MindNode then drag-drop?
+
+The stdlib links a "Swift Standard Library.playground" that walks
+through text and sequences/collections. Nice!
+
+Highlights:
+
+- `Indexable.index(_:offsetBy:)` and the `…limitedBy:` variant, with Strings
+- `endIndex` is always one past the last element, similar to what you'd expect
+  with `array.count`.
+- `RangeReplaceableCollection` and `replaceSubrange(_:with:)`
+- "To implement the model layer, we'll create a custom collection type that
+  represents a continuous range of dates and associated images."
+- Collection -> BidirectionalCollection -> RandomAccessCollection
+    - Strideable
+- Declaring a collection with tuple element labels, but stashing tuples
+  from literals that don't use the labels - useful exploitation of how
+  labels are just sugar to avoid a lot of redundant noise
+
+Language features show up as protocols:
+
+- Sequence: Allows use in `for x in seq`
+- ExpressibleByStringLiteral: Allows to do `x = "foo"`
+- ExpressibleByStringInterpolation: Use this to handle turning
+  interpolation chunks into a type and then gluing that same type together
+- BitwiseOperations: Works with `&^|~`
+- Error: Can be `throw`n
+
+Ominous: "Types provided by the standard library meet all performance
+expectations of the protocols they adopt, except where explicitly noted."
+Uh, a list of these exceptions would be good!
+
+Can just use `debugPrint` rather than `print` + `String(reflecting:)`.
+
+
+### Docs Bug: "Typealiases" section instead of "Associated Types"
+Looks like it wasn't updated for the introduction of the `associatedtype`
+declarator. Though even before then, they were still _called_ associated
+types, so, beats me.
+
+
+### What is an archetype? A placeholder for the type satisfying a protocol.
+Plenty of useful examples in the test file
+[test/Constraints/members.swift](https://github.com/apple/swift/blob/swift-3.0-RELEASE/test/Constraints/members.swift#L143-L244).
+
+Distinguishing "archetype" from "existential" looks useful, though.
+Ah, they use existential to refer to something of the protocol type itself,
+so treated as `P`, rather than as `T: P`. `T` is an archetype; `P` is an
+existential.
+
+Let's confirm by running some of these examples through the compiler
+and then looking at the mangling to see if the mangled forms matching
+archetypes in [docs/ABI.rst](https://github.com/apple/swift/blob/swift-3.0-RELEASE/docs/ABI.rst#types)
+appear.
+
+Well, this isn't promising - grepping after demangling shows me no archetypes:
+
+```
+> ./run archetype.swift
+running: swiftc archetype.swift -module-name SuchModule -o build/archetype
+archetype.swift:53:7: warning: variable 't' was never mutated; consider changing to 'let' constant
+  var t = t
+  ~~~ ^
+  let
+> nm build/archetype | xcrun swift-demangle | grep archetype | wc -l
+       0
+```
+
+OTOH, swift-demangle has a nifty `-expand` option that explains each layer
+of the demangling, though not with a xref to the part of the input string
+that told it that, unfortunately.
+
+So let's have a closer look - maybe they've since changed the demangled
+text. But we can start by searching for hallmarks of the expected mangling
+per the ABI in `nm`'s output.
+
+Searching for the uppercase `Q` that seems to be the hallmark of an
+explicit archetype finds only the spoiler of `SQ`, meaning
+`Swift.ImplicitlyUnwrappedOptional`.
+
+There are more compact encodings that allow to elide the `Q` bits, though.
+`associated-type` can be a `substitution`, which is a backref
+`S index`, where `index` counts as `S_`, `S0_`, `S1_` for 0, 1, 2.
+
+Hmm, looking at `Demangle.cpp` line 155, it seems to just use `A` as
+the default value for an archetype name. The index is the "depth".
+Apparently "dependent generic parameter" is another kind of archetype?
+And I can see that, though the code references archetypes, no string
+begins `"arch` or `"Arch`.
+
+And `demangleArchetypeType()` handles all of protocol `Self`-type (`QP`),
+associated types (`QQ`+index), backrefs to `Self` or an associated type,
+substitutions for the Swift stdlib (`Qs`), archetypes with depth
+(`Qd`+index+index), archetype qualified with context (`Qq` index context,
+apparently only emitted in DWARF debug info?), and simple `Q`+index
+archetype refs.
+
+So, though the compiler cares intimately about "archetypes", the user only
+ever sees associated types, `Self`, and dependent generics.
+
+Let's verify that we know what a dependent generic is.
+
+Oh, derp! The archetype code is just checking compilation of stuff,
+so assigns to `_` rather than an actual name, so there's nothing useful
+in the compiled output. Lemme just go and swizzle each `let _` for an
+actual name… Howzabout `nameN`?
+
+```
+> awk 'BEGIN { counter = 0 } /let _/ { sub(/let _/, "let name"  counter); counter += 1 } { print($0) }' archetype.swift  > foo
+> mv foo archetype.swift
+```
+
+## Unanswered Questions
 - Community:
     - How does open source Swift work, how is it organized, and who's involved?
     - What's up with the package manager?
